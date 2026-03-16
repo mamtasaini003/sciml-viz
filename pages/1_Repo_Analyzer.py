@@ -85,7 +85,7 @@ with col2:
         
         with tab_weights:
             st.markdown("#### Internal Tensor Geometries")
-            tensors = {k: v.numpy() for k, v in state_dict.items() if isinstance(v, torch.Tensor) and v.ndim > 0}
+            tensors = {k: (np.abs(v.numpy()) if v.is_complex() else v.numpy()) for k, v in state_dict.items() if isinstance(v, torch.Tensor) and v.ndim > 0}
             
             if tensors:
                 selected_layer = st.selectbox("Select Layer to Plot", list(tensors.keys()))
