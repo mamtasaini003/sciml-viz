@@ -61,7 +61,7 @@ else:
 st.markdown("---")
 st.markdown("### Instructions")
 st.markdown("""
-- **Model Explorer:** Navigate to the `Model Explorer` page using the left sidebar. Select deployed `.pth` files and visualize Fourier modes, kernels, and network weights.
-- **Live Demos:** Run inference interactively by generating initial conditions and predicting PDE solutions via the `Live Demos` page.
+- **Repo Analyzer:** Navigate to the `Repo Analyzer` page using the left sidebar. Enter a GitHub repository link to fetch deployed `.pth` weights.
+- **Live Inference Execution:** Select an inference script and run it natively to visualize the input field traversing through the model layers and generating the final output!
 - **Paper Gallery:** Read connected research papers in the `Paper Gallery`.
 """)
