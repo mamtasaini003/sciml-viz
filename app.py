@@ -1,341 +1,356 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import torch
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
 import numpy as np
+import json
 import os
 
-st.set_page_config(page_title="FNO Visualization", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="FNO Architecture Visualizer", layout="wide", initial_sidebar_state="collapsed")
 
-# ── CSS ──
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-.stApp { background: #0d1117; color: #c9d1d9; font-family: 'Inter', sans-serif; }
-[data-testid="stSidebar"] { background: #161b22 !important; border-right: 1px solid #30363d; }
-.block-container { padding-top: 1rem; }
-h1, h2, h3 { color: #c9d1d9 !important; }
-
-.hero { text-align: center; padding: 2rem 1rem 1rem; }
-.hero h1 { font-size: 2.8rem; color: #58a6ff !important; font-weight: 800; margin-bottom: 5px; }
-
-.comp-card {
-    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
-    padding: 20px 24px; margin-bottom: 10px;
-    transition: border-color 0.2s;
-}
-.comp-card:hover { border-color: #58a6ff; }
-.comp-card h3 { margin-top: 0; color: #58a6ff !important; font-size: 1.15rem; }
-.comp-card p { color: #8b949e; font-size: 0.92rem; line-height: 1.5; margin-bottom: 8px; }
-
-.eq-box {
-    background: #21262d; border: 1px solid #30363d; border-radius: 8px;
-    padding: 12px 18px; margin: 10px 0 15px; font-family: 'Courier New', monospace;
-    color: #f0883e; font-size: 1rem; text-align: center;
-}
-.dim-tag {
-    background: rgba(88,166,255,0.15); color: #58a6ff; padding: 3px 10px;
-    border-radius: 12px; font-size: 0.8rem; display: inline-block; margin: 2px 4px;
-    border: 1px solid rgba(88,166,255,0.3);
-}
-.op-tag {
-    background: rgba(240,136,62,0.15); color: #f0883e; padding: 3px 10px;
-    border-radius: 12px; font-size: 0.8rem; display: inline-block; margin: 2px 4px;
-    border: 1px solid rgba(240,136,62,0.3);
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ── Load Model ──
+# Load model data
 model_dir = "models"
 available = [m for m in os.listdir(model_dir) if m.endswith('.pth')] if os.path.exists(model_dir) else []
+if not available:
+    st.error("No models found!")
+    st.stop()
 
-with st.sidebar:
-    st.markdown("## ⚛️ FNO Visualizer")
-    if not available:
-        st.error("No models found!")
-        st.stop()
-    selected = st.selectbox("Model", available, index=available.index('navier_stokes_fno.pth') if 'navier_stokes_fno.pth' in available else 0)
-    sd = torch.load(os.path.join(model_dir, selected), map_location='cpu')
-    n_params = sum(p.numel() for p in sd.values())
-    st.metric("Parameters", f"{n_params:,}")
-    st.metric("Layers", len(sd))
-    
-    st.markdown("---")
-    st.markdown("### Table of Contents")
-    sections = ["Introduction", "Input Lifting", "Spectral Conv", "Skip Connection", "Residual Add + GELU", "Projection / Decode", "Full Model Map"]
-    chosen = st.radio("Navigate to:", sections, label_visibility="collapsed")
+selected = available[0]
+sd = torch.load(os.path.join(model_dir, selected), map_location='cpu', weights_only=False)
 
-# ── Helper: compact heatmap ──
-def mini_heatmap(tensor, title="", height=220):
-    arr = tensor.numpy()
-    if np.iscomplexobj(arr): arr = np.abs(arr)
-    orig = list(arr.shape)
-    if arr.ndim == 1: arr = arr.reshape(1, -1)
-    elif arr.ndim == 4:
-        a, b, c, d = arr.shape
-        arr = arr.reshape(a*c, b*d)
-    elif arr.ndim > 2:
-        arr = arr.reshape(-1, arr.shape[-1])
-    fig = go.Figure(go.Heatmap(z=arr, colorscale="Plasma",
-        hovertemplate="(%{x}, %{y})<br><b>%{z:.5f}</b><extra></extra>"))
-    fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="#0d1117", margin=dict(l=0,r=0,t=25,b=0), height=height,
-        title=dict(text=f"{title}  <span style='color:#8b949e'>shape {orig}</span>", font=dict(size=12, color="#c9d1d9")),
-        xaxis=dict(showticklabels=False, showgrid=False), yaxis=dict(showticklabels=False, showgrid=False, autorange="reversed"))
-    return fig
+# Build layer data for JS
+layers_js = []
+for key in sd:
+    t = sd[key]
+    arr = t.numpy()
+    if np.iscomplexobj(arr):
+        arr = np.abs(arr).astype(np.float32)
+    else:
+        arr = arr.astype(np.float32)
+    flat = arr.flatten()
+    vmin, vmax = float(flat.min()), float(flat.max())
+    rng = vmax - vmin if (vmax - vmin) > 1e-8 else 1.0
+    normalized = ((flat - vmin) / rng)
+    # Downsample for browser: max 2048 pixels per block face
+    n = len(normalized)
+    if n > 2048:
+        step = max(1, n // 2048)
+        normalized = normalized[::step]
+        n = len(normalized)
+    layers_js.append({
+        'name': key,
+        'shape': list(t.shape),
+        'params': int(t.numel()),
+        'dtype': str(t.dtype),
+        'vmin': round(vmin, 5),
+        'vmax': round(vmax, 5),
+        'mean': round(float(t.float().mean()), 5),
+        'pixels': [round(float(x), 3) for x in normalized],
+        'n_pixels': n,
+    })
 
-# ── HERO ──
-st.markdown("""
-<div class='hero'>
-    <h1>Fourier Neural Operator</h1>
-    <p style='color:#8b949e; font-size:1.1rem; max-width:700px; margin:0 auto;'>
-        Interactive walkthrough of the FNO architecture for solving PDEs.
-        <br>Based on <i>Li et al., "Fourier Neural Operator for Parametric PDEs" (ICLR 2021)</i>
-    </p>
+layers_json = json.dumps(layers_js)
+
+html_code = f"""
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ background: #0d1117; overflow: hidden; font-family: 'Segoe UI', sans-serif; }}
+canvas {{ display: block; }}
+#info-panel {{
+    position: fixed; top: 12px; right: 12px;
+    background: rgba(22,27,34,0.95); border: 1px solid #30363d;
+    border-radius: 10px; padding: 18px 22px; color: #c9d1d9;
+    min-width: 280px; max-width: 340px; z-index: 100;
+    backdrop-filter: blur(12px); box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}}
+#info-panel h2 {{ color: #58a6ff; font-size: 15px; margin-bottom: 10px; border-bottom: 1px solid #30363d; padding-bottom: 8px; }}
+#info-panel .row {{ display: flex; justify-content: space-between; margin: 4px 0; font-size: 13px; }}
+#info-panel .label {{ color: #8b949e; }}
+#info-panel .val {{ color: #f0883e; font-weight: 600; }}
+#title-bar {{
+    position: fixed; top: 12px; left: 12px;
+    background: rgba(22,27,34,0.95); border: 1px solid #30363d;
+    border-radius: 10px; padding: 14px 20px; z-index: 100; color: #c9d1d9;
+    backdrop-filter: blur(12px);
+}}
+#title-bar h1 {{ font-size: 18px; color: #58a6ff; margin: 0; }}
+#title-bar p {{ font-size: 12px; color: #8b949e; margin-top: 4px; }}
+#controls-hint {{
+    position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+    background: rgba(22,27,34,0.9); border: 1px solid #30363d;
+    border-radius: 20px; padding: 8px 20px; color: #8b949e;
+    font-size: 12px; z-index: 100;
+}}
+</style>
+</head>
+<body>
+
+<div id="title-bar">
+    <h1>⚛️ FNO Architecture</h1>
+    <p>Fourier Neural Operator — Interactive 3D View</p>
 </div>
-""", unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════════════
-# SECTIONS — each one is a clean, contained card
-# ══════════════════════════════════════════════════════════════════════
+<div id="info-panel">
+    <h2 id="panel-title">Hover over a block</h2>
+    <div class="row"><span class="label">Layer:</span><span class="val" id="p-name">—</span></div>
+    <div class="row"><span class="label">Shape:</span><span class="val" id="p-shape">—</span></div>
+    <div class="row"><span class="label">Parameters:</span><span class="val" id="p-params">—</span></div>
+    <div class="row"><span class="label">Type:</span><span class="val" id="p-dtype">—</span></div>
+    <div class="row"><span class="label">Value Range:</span><span class="val" id="p-range">—</span></div>
+    <div class="row"><span class="label">Mean:</span><span class="val" id="p-mean">—</span></div>
+    <canvas id="mini-heatmap" width="256" height="40" style="margin-top:10px; border-radius:4px; width:100%;"></canvas>
+</div>
 
-if chosen == "Introduction":
-    st.markdown("<div class='comp-card'>", unsafe_allow_html=True)
-    st.markdown("### 📖 What is the Fourier Neural Operator?")
-    st.markdown("""<p>
-    The <b>Fourier Neural Operator (FNO)</b> is a neural network that learns to solve 
-    <b>partial differential equations</b> (PDEs) by operating in <b>Fourier (frequency) space</b> 
-    rather than physical space.<br><br>
-    Traditional neural networks process data point-by-point. The FNO instead transforms the 
-    entire input field into its frequency representation using FFT, applies learnable filters 
-    to specific frequency modes, and transforms back. This makes it:<br>
-    • <b>Resolution-invariant</b> — train on 64×64, evaluate on 256×256<br>
-    • <b>Globally aware</b> — every output point "sees" the entire input domain<br>
-    • <b>Fast</b> — FFT is O(N log N) vs O(N²) for attention
-    </p>""", unsafe_allow_html=True)
-    st.markdown("<div class='eq-box'>v<sub>k+1</sub>(x) = σ( W<sub>k</sub> · v<sub>k</sub>(x)  +  𝓕⁻¹( R<sub>k</sub> · 𝓕(v<sub>k</sub>) )(x) )</div>", unsafe_allow_html=True)
+<div id="controls-hint">
+    🖱️ Drag to rotate &nbsp;|&nbsp; Scroll to zoom &nbsp;|&nbsp; Right-drag to pan &nbsp;|&nbsp; Hover blocks for details
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const LAYERS = {layers_json};
+
+// Plasma colormap (approximate)
+function plasma(t) {{
+    t = Math.max(0, Math.min(1, t));
+    const r = Math.min(1, 0.05 + t * 2.2 - t * t * 1.4);
+    const g = Math.min(1, Math.max(0, -0.7 + t * 2.8 - t * t * 1.2));
+    const b = Math.min(1, Math.max(0, 0.53 + t * 0.7 - t * t * 1.8));
+    return [r, g, b];
+}}
+
+// Scene setup
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d1117);
+scene.fog = new THREE.FogExp2(0x0d1117, 0.008);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 500);
+camera.position.set(30, 25, 50);
+
+const renderer = new THREE.WebGLRenderer({{ antialias: true }});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.target.set(0, -15, 0);
+
+// Lighting
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+const dl = new THREE.DirectionalLight(0xffffff, 0.6);
+dl.position.set(20, 30, 20);
+scene.add(dl);
+
+// Group categories
+const categories = {{
+    'fc0': {{ color: 0x1f77b4, label: 'Input Lifting', xOffset: 0 }},
+    'conv0': {{ color: 0x2ca02c, label: 'Spectral Conv 0', xOffset: 0 }},
+    'w0': {{ color: 0x9467bd, label: 'Skip Conv 0', xOffset: 12 }},
+    'conv1': {{ color: 0x2ca02c, label: 'Spectral Conv 1', xOffset: 0 }},
+    'w1': {{ color: 0x9467bd, label: 'Skip Conv 1', xOffset: 12 }},
+    'conv2': {{ color: 0xff7f0e, label: 'Spectral Conv 2', xOffset: 0 }},
+    'w2': {{ color: 0xd62728, label: 'Skip Conv 2', xOffset: 12 }},
+    'conv3': {{ color: 0xff7f0e, label: 'Spectral Conv 3', xOffset: 0 }},
+    'w3': {{ color: 0xd62728, label: 'Skip Conv 3', xOffset: 12 }},
+    'fc1': {{ color: 0xe377c2, label: 'Decode Layer 1', xOffset: 0 }},
+    'fc2': {{ color: 0x8c564b, label: 'Decode Layer 2', xOffset: 0 }},
+}};
+
+function getCat(name) {{
+    for (const [prefix, cat] of Object.entries(categories)) {{
+        if (name.startsWith(prefix)) return cat;
+    }}
+    return {{ color: 0x58a6ff, label: 'Other', xOffset: 0 }};
+}}
+
+// Create blocks
+const blockGroup = new THREE.Group();
+const blockMeshes = [];
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+let yPos = 0;
+const SCALE = 0.0008; // scale params to visual size
+
+LAYERS.forEach((layer, idx) => {{
+    const cat = getCat(layer.name);
+    const vol = Math.cbrt(layer.params * SCALE) * 3;
+    const w = Math.max(1.5, vol);
+    const h = Math.max(0.6, vol * 0.4);
+    const d = Math.max(1.5, vol);
     
-    # Architecture overview diagram
-    fig = go.Figure()
-    blocks = [
-        (0, "Input\na(x)", "#1f77b4", 1.5), (3, "Lift\n(Linear)", "#ff7f0e", 1.5),
-        (6, "Fourier\nLayer ×4", "#2ca02c", 3), (11, "Decode\n(MLP)", "#d62728", 2),
-        (15, "Output\nu(x)", "#9467bd", 1.5),
-    ]
-    for x, label, color, w in blocks:
-        fig.add_shape(type="rect", x0=x, x1=x+w, y0=0, y1=2, fillcolor=color, opacity=0.7, line=dict(color="white", width=1))
-        fig.add_annotation(x=x+w/2, y=1, text=label, showarrow=False, font=dict(color="white", size=13))
-    for i in range(len(blocks)-1):
-        x0 = blocks[i][0] + blocks[i][3]
-        x1 = blocks[i+1][0]
-        fig.add_annotation(x=(x0+x1)/2, y=1, text="→", showarrow=False, font=dict(size=22, color="#58a6ff"))
-    fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        height=120, margin=dict(l=10,r=10,t=10,b=10), xaxis=dict(visible=False, range=[-1,17.5]), yaxis=dict(visible=False, range=[-0.5,2.5]))
-    st.plotly_chart(fig, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-elif chosen == "Input Lifting":
-    st.markdown("<div class='comp-card'>", unsafe_allow_html=True)
-    st.markdown("### 🔼 Input Lifting Layer (P)")
-    st.markdown("""<p>
-    The raw PDE input <code>a(x)</code> (e.g. initial vorticity or permeability field) has only 
-    1–3 channels. The lifting layer is a <b>pointwise linear transform</b> that projects each 
-    spatial point into a higher-dimensional feature space of width <code>W</code> (typically 32).
-    <br><br>
-    Spatial coordinates <code>(x, y)</code> are concatenated to the input, so the linear layer maps 
-    from <code>C_in + 2</code> → <code>W</code> channels. This is applied identically at every grid point.
-    </p>""", unsafe_allow_html=True)
-    st.markdown("<div class='eq-box'>v₀(x) = P · [a(x); x, y] + b &nbsp;&nbsp; where P ∈ ℝ<sup>W × (C+2)</sup></div>", unsafe_allow_html=True)
-    st.markdown("<span class='dim-tag'>Input: [B, 64, 64, 3]</span> <span class='op-tag'>Linear (3→32)</span> <span class='dim-tag'>Output: [B, 64, 64, 32]</span>", unsafe_allow_html=True)
+    // Create geometry with per-face vertex colors from actual weights
+    const geo = new THREE.BoxGeometry(w, h, d, 
+        Math.min(32, Math.ceil(Math.sqrt(layer.n_pixels))),
+        1,
+        Math.min(32, Math.ceil(Math.sqrt(layer.n_pixels)))
+    );
     
-    # Show the actual weights
-    fc0_w = [k for k in sd if k.startswith('fc0') and 'weight' in k]
-    fc0_b = [k for k in sd if k.startswith('fc0') and 'bias' in k]
-    c1, c2 = st.columns(2)
-    if fc0_w:
-        c1.plotly_chart(mini_heatmap(sd[fc0_w[0]], f"Weight: {fc0_w[0]}"), use_container_width=True)
-    if fc0_b:
-        c2.plotly_chart(mini_heatmap(sd[fc0_b[0]], f"Bias: {fc0_b[0]}", height=80), use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-elif chosen == "Spectral Conv":
-    st.markdown("<div class='comp-card'>", unsafe_allow_html=True)
-    st.markdown("### 🌊 Spectral Convolution (Fourier Layer Core)")
-    st.markdown("""<p>
-    This is the <b>key innovation</b> of the FNO. Instead of a spatial convolution kernel, the 
-    network learns <b>complex-valued weights</b> <code>R<sub>k</sub></code> that multiply directly 
-    against the Fourier modes of the input.<br><br>
-    <b>Step by step:</b><br>
-    1. <b>FFT</b> — transform the input field v<sub>k</sub> into frequency space: 𝓕(v<sub>k</sub>)<br>
-    2. <b>Truncate</b> — keep only the lowest <code>modes</code> frequencies (ignore high-freq noise)<br>
-    3. <b>Multiply</b> — element-wise complex multiply with learned weight tensor R<sub>k</sub><br>
-    4. <b>IFFT</b> — transform back to physical space: 𝓕⁻¹(R<sub>k</sub> · 𝓕(v<sub>k</sub>))
-    </p>""", unsafe_allow_html=True)
-    st.markdown("<div class='eq-box'>𝓕⁻¹( R<sub>k</sub>(ξ) · 𝓕(v<sub>k</sub>)(ξ) )&nbsp;&nbsp; where R<sub>k</sub> ∈ ℂ<sup>W×W×modes₁×modes₂</sup></div>", unsafe_allow_html=True)
+    // Apply pixel colors to vertices
+    const count = geo.attributes.position.count;
+    const colors = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {{
+        const pixIdx = i % layer.n_pixels;
+        const [r, g, b] = plasma(layer.pixels[pixIdx]);
+        colors[i * 3] = r;
+        colors[i * 3 + 1] = g;
+        colors[i * 3 + 2] = b;
+    }}
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     
-    # Find spectral conv weights
-    conv_keys = sorted([k for k in sd if 'conv' in k and 'weight' in k])
-    if conv_keys:
-        layer_idx = st.selectbox("Select Fourier Layer", range(len(conv_keys)), format_func=lambda i: conv_keys[i])
-        key = conv_keys[layer_idx]
-        t = sd[key]
-        st.markdown(f"<span class='dim-tag'>Shape: {list(t.shape)}</span> <span class='dim-tag'>Params: {t.numel():,}</span> <span class='op-tag'>Complex-valued</span>", unsafe_allow_html=True)
+    const mat = new THREE.MeshPhongMaterial({{
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.92,
+        shininess: 60,
+    }});
+    
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(cat.xOffset, yPos, 0);
+    mesh.userData = {{ layerIdx: idx, layerData: layer, cat: cat }};
+    
+    blockGroup.add(mesh);
+    blockMeshes.push(mesh);
+    
+    // Edge wireframe
+    const edges = new THREE.EdgesGeometry(new THREE.BoxGeometry(w + 0.05, h + 0.05, d + 0.05));
+    const lineMat = new THREE.LineBasicMaterial({{ color: cat.color, transparent: true, opacity: 0.7 }});
+    const wireframe = new THREE.LineSegments(edges, lineMat);
+    wireframe.position.copy(mesh.position);
+    blockGroup.add(wireframe);
+    
+    // Label sprite
+    const canvas = document.createElement('canvas');
+    canvas.width = 512; canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#c9d1d9';
+    ctx.font = 'bold 28px Segoe UI';
+    ctx.fillText(layer.name, 10, 38);
+    ctx.font = '22px Segoe UI';
+    ctx.fillStyle = '#8b949e';
+    ctx.fillText('[' + layer.shape.join('×') + ']', 10 + ctx.measureText(layer.name + '  ').width * 0.9, 38);
+    
+    const tex = new THREE.CanvasTexture(canvas);
+    const spriteMat = new THREE.SpriteMaterial({{ map: tex, transparent: true, opacity: 0.85 }});
+    const sprite = new THREE.Sprite(spriteMat);
+    sprite.scale.set(8, 1, 1);
+    sprite.position.set(cat.xOffset - w/2 - 5, yPos, 0);
+    blockGroup.add(sprite);
+    
+    // Connection lines to next block
+    if (idx < LAYERS.length - 1) {{
+        const nextCat = getCat(LAYERS[idx + 1].name);
+        const nextVol = Math.cbrt(LAYERS[idx + 1].params * SCALE) * 3;
+        const nextH = Math.max(0.6, nextVol * 0.4);
+        const gap = h/2 + 0.3;
+        const nextY = yPos - h/2 - nextH/2 - 1.8;
         
-        arr = np.abs(t.numpy())
-        # Show as a grid of mode magnitudes
-        if arr.ndim == 4:
-            c_out, c_in, m1, m2 = arr.shape
-            # Show first output channel's view across input channels × modes
-            fig = make_subplots(rows=1, cols=min(4, c_out), subplot_titles=[f"Out ch {i}" for i in range(min(4, c_out))])
-            for i in range(min(4, c_out)):
-                slice_data = arr[i].reshape(c_in, m1*m2)
-                fig.add_trace(go.Heatmap(z=slice_data, colorscale="Viridis", showscale=(i==0),
-                    hovertemplate="in_ch %{y}, mode %{x}<br><b>|R|=%{z:.5f}</b><extra></extra>"), row=1, col=i+1)
-            fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", height=300,
-                margin=dict(l=0,r=0,t=30,b=0))
-            for ax in fig.layout:
-                if ax.startswith('xaxis') or ax.startswith('yaxis'):
-                    fig.layout[ax].showticklabels = False
-                    fig.layout[ax].showgrid = False
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.plotly_chart(mini_heatmap(t, key), use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+        const points = [
+            new THREE.Vector3(cat.xOffset, yPos - h/2, 0),
+            new THREE.Vector3(cat.xOffset, yPos - h/2 - 0.9, 0),
+            new THREE.Vector3(nextCat.xOffset, nextY + nextH/2 + 0.9, 0),
+            new THREE.Vector3(nextCat.xOffset, nextY + nextH/2, 0),
+        ];
+        const curve = new THREE.CatmullRomCurve3(points);
+        const lineGeo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(20));
+        const lineMat2 = new THREE.LineBasicMaterial({{ color: 0x30363d, linewidth: 1 }});
+        blockGroup.add(new THREE.Line(lineGeo, lineMat2));
+    }}
+    
+    yPos -= h + 1.8;
+}});
 
-elif chosen == "Skip Connection":
-    st.markdown("<div class='comp-card'>", unsafe_allow_html=True)
-    st.markdown("### ⏭️ Skip Connection (1×1 Convolution)")
-    st.markdown("""<p>
-    In parallel with the spectral path, a simple <b>1×1 pointwise convolution</b> 
-    <code>W<sub>k</sub></code> is applied to the input. This acts as a <b>local linear residual</b> 
-    that preserves high-frequency spatial information the FFT branch might discard 
-    (since we truncate to only <code>modes</code> frequencies).<br><br>
-    Think of it as: the spectral branch captures <i>global patterns</i>, while the skip 
-    captures <i>local detail</i>. They are added together before activation.
-    </p>""", unsafe_allow_html=True)
-    st.markdown("<div class='eq-box'>W<sub>k</sub> · v<sub>k</sub>(x) &nbsp;&nbsp; where W<sub>k</sub> ∈ ℝ<sup>W×W×1×1</sup> (pointwise)</div>", unsafe_allow_html=True)
-    
-    w_keys = sorted([k for k in sd if k.startswith('w') and 'weight' in k])
-    w_bias = sorted([k for k in sd if k.startswith('w') and 'bias' in k])
-    if w_keys:
-        layer_idx = st.selectbox("Select Skip Layer", range(len(w_keys)), format_func=lambda i: w_keys[i])
-        c1, c2 = st.columns([3, 1])
-        c1.plotly_chart(mini_heatmap(sd[w_keys[layer_idx]], f"Weight: {w_keys[layer_idx]}"), use_container_width=True)
-        if layer_idx < len(w_bias):
-            c2.plotly_chart(mini_heatmap(sd[w_bias[layer_idx]], f"Bias", height=80), use_container_width=True)
-        t = sd[w_keys[layer_idx]]
-        st.markdown(f"<span class='dim-tag'>Shape: {list(t.shape)}</span> <span class='dim-tag'>Params: {t.numel():,}</span>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+scene.add(blockGroup);
 
-elif chosen == "Residual Add + GELU":
-    st.markdown("<div class='comp-card'>", unsafe_allow_html=True)
-    st.markdown("### ➕ Residual Addition & GELU Activation")
-    st.markdown("""<p>
-    The outputs from the <b>spectral branch</b> (global Fourier filtering) and 
-    <b>skip branch</b> (local 1×1 conv) are <b>summed element-wise</b>, then passed 
-    through a <b>GELU</b> non-linearity.<br><br>
-    This creates the non-linear expressiveness needed to approximate complex PDE solution operators. 
-    The process repeats for <b>K layers</b> (typically 4), each refining the solution estimate 
-    at progressively higher abstraction levels.
-    </p>""", unsafe_allow_html=True)
-    st.markdown("<div class='eq-box'>v<sub>k+1</sub> = GELU( 𝓕⁻¹(R<sub>k</sub> · 𝓕(v<sub>k</sub>)) + W<sub>k</sub> · v<sub>k</sub> )</div>", unsafe_allow_html=True)
-    
-    # Show GELU curve
-    x_gelu = np.linspace(-4, 4, 200)
-    y_gelu = x_gelu * 0.5 * (1 + np.vectorize(lambda x: float(torch.erf(torch.tensor(x/np.sqrt(2)))))(x_gelu))
-    fig = go.Figure(go.Scatter(x=x_gelu, y=y_gelu, mode='lines', line=dict(color='#58a6ff', width=3)))
-    fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", height=200,
-        margin=dict(l=40,r=10,t=30,b=30), title=dict(text="GELU(x) Activation", font=dict(size=12)),
-        xaxis=dict(title=dict(text="x"), showgrid=True, gridcolor="#21262d"),
-        yaxis=dict(title=dict(text="GELU(x)"), showgrid=True, gridcolor="#21262d"))
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Show the iterative block diagram
-    fig2 = go.Figure()
-    for i in range(4):
-        x0 = i * 4.5
-        fig2.add_shape(type="rect", x0=x0, x1=x0+3.5, y0=0, y1=2, fillcolor="#2ca02c", opacity=0.5, line=dict(color="white"))
-        fig2.add_annotation(x=x0+1.75, y=1, text=f"Fourier<br>Layer {i}", showarrow=False, font=dict(color="white", size=11))
-        if i < 3:
-            fig2.add_annotation(x=x0+3.5+0.5, y=1, text="→", showarrow=False, font=dict(size=20, color="#58a6ff"))
-    fig2.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        height=100, margin=dict(l=10,r=10,t=10,b=10), xaxis=dict(visible=False, range=[-1,18]), yaxis=dict(visible=False, range=[-0.5,2.5]))
-    st.plotly_chart(fig2, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+// Hover logic
+let hoveredMesh = null;
 
-elif chosen == "Projection / Decode":
-    st.markdown("<div class='comp-card'>", unsafe_allow_html=True)
-    st.markdown("### 📤 Output Projection (Decode)")
-    st.markdown("""<p>
-    After K Fourier layers, the feature map v<sub>K</sub> has width <code>W=32</code> channels. 
-    The decode stage is a small <b>2-layer MLP</b> applied pointwise at every spatial location to 
-    project back down to the desired output dimension (typically 1 for scalar fields like pressure 
-    or vorticity).<br><br>
-    Layer 1: W → 128 channels (with GELU)<br>
-    Layer 2: 128 → C_out channels
-    </p>""", unsafe_allow_html=True)
-    st.markdown("<div class='eq-box'>u(x) = Q₂ · GELU( Q₁ · v<sub>K</sub>(x) + b₁ ) + b₂ &nbsp;&nbsp; where Q₁ ∈ ℝ<sup>128×W</sup>, Q₂ ∈ ℝ<sup>C_out×128</sup></div>", unsafe_allow_html=True)
-    
-    fc1_keys = sorted([k for k in sd if k.startswith('fc1')])
-    fc2_keys = sorted([k for k in sd if k.startswith('fc2')])
-    
-    c1, c2 = st.columns(2)
-    for k in fc1_keys:
-        c1.plotly_chart(mini_heatmap(sd[k], k), use_container_width=True)
-    for k in fc2_keys:
-        c2.plotly_chart(mini_heatmap(sd[k], k, height=100), use_container_width=True)
-    
-    st.markdown("<span class='dim-tag'>[B, 64, 64, 32]</span> <span class='op-tag'>→ Linear 32→128</span> <span class='op-tag'>→ GELU</span> <span class='op-tag'>→ Linear 128→1</span> <span class='dim-tag'>[B, 64, 64, 1]</span>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+function onMouseMove(e) {{
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+}}
+window.addEventListener('mousemove', onMouseMove);
 
-elif chosen == "Full Model Map":
-    st.markdown("<div class='comp-card'>", unsafe_allow_html=True)
-    st.markdown("### 🗺️ Full Model — All Parameters at a Glance")
-    st.markdown("""<p>
-    Every rectangle below is one parameter tensor from the checkpoint. The area of each block 
-    is proportional to the number of parameters it contains. Hover to see exact values.
-    </p>""", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+function updateInfoPanel(data) {{
+    if (!data) {{
+        document.getElementById('panel-title').textContent = 'Hover over a block';
+        document.getElementById('p-name').textContent = '—';
+        document.getElementById('p-shape').textContent = '—';
+        document.getElementById('p-params').textContent = '—';
+        document.getElementById('p-dtype').textContent = '—';
+        document.getElementById('p-range').textContent = '—';
+        document.getElementById('p-mean').textContent = '—';
+        return;
+    }}
+    const layer = data.layerData;
+    document.getElementById('panel-title').textContent = data.cat.label;
+    document.getElementById('p-name').textContent = layer.name;
+    document.getElementById('p-shape').textContent = '[' + layer.shape.join(' × ') + ']';
+    document.getElementById('p-params').textContent = layer.params.toLocaleString();
+    document.getElementById('p-dtype').textContent = layer.dtype;
+    document.getElementById('p-range').textContent = layer.vmin + ' → ' + layer.vmax;
+    document.getElementById('p-mean').textContent = layer.mean.toString();
     
-    # Treemap of parameter sizes
-    names, parents, values, colors = [], [], [], []
-    color_map = {"fc0": "#1f77b4", "conv": "#2ca02c", "w": "#9467bd", "fc1": "#e377c2", "fc2": "#8c564b"}
+    // Mini heatmap
+    const cv = document.getElementById('mini-heatmap');
+    const ctx = cv.getContext('2d');
+    const w = cv.width, h = cv.height;
+    ctx.clearRect(0, 0, w, h);
+    const px = layer.pixels;
+    const cols = w;
+    const rows = Math.ceil(px.length / cols);
+    const pw = w / cols, ph = h / Math.max(1, rows);
+    for (let i = 0; i < px.length; i++) {{
+        const [r, g, b] = plasma(px[i]);
+        ctx.fillStyle = `rgb(${{Math.floor(r*255)}},${{Math.floor(g*255)}},${{Math.floor(b*255)}})`;
+        const col = i % cols, row = Math.floor(i / cols);
+        ctx.fillRect(col * pw, row * ph, Math.ceil(pw), Math.ceil(ph));
+    }}
+}}
+
+// Animation loop
+function animate() {{
+    requestAnimationFrame(animate);
+    controls.update();
     
-    for key in sd:
-        t = sd[key]
-        n = t.numel()
-        names.append(f"{key}\n{list(t.shape)}")
-        parents.append("")
-        values.append(n)
-        c = "#58a6ff"
-        for prefix, col in color_map.items():
-            if key.startswith(prefix): c = col; break
-        colors.append(c)
+    // Raycast for hover
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(blockMeshes);
     
-    fig_tree = go.Figure(go.Treemap(
-        labels=names, parents=parents, values=values,
-        marker=dict(colors=colors, line=dict(width=2, color="#0d1117")),
-        textinfo="label+value",
-        hovertemplate="<b>%{label}</b><br>Parameters: %{value:,}<extra></extra>",
-    ))
-    fig_tree.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=5,r=5,t=5,b=5), height=500)
-    st.plotly_chart(fig_tree, use_container_width=True)
+    if (hoveredMesh) {{
+        hoveredMesh.material.opacity = 0.92;
+        hoveredMesh.material.emissive = new THREE.Color(0x000000);
+    }}
     
-    # Compact overview strip
-    st.markdown("<div class='comp-card'>", unsafe_allow_html=True)
-    st.markdown("### All Weight Matrices (compact)")
+    if (intersects.length > 0) {{
+        hoveredMesh = intersects[0].object;
+        hoveredMesh.material.opacity = 1.0;
+        hoveredMesh.material.emissive = new THREE.Color(hoveredMesh.userData.cat.color);
+        hoveredMesh.material.emissiveIntensity = 0.3;
+        updateInfoPanel(hoveredMesh.userData);
+        document.body.style.cursor = 'pointer';
+    }} else {{
+        hoveredMesh = null;
+        updateInfoPanel(null);
+        document.body.style.cursor = 'default';
+    }}
     
-    sel_key = st.selectbox("Inspect layer:", list(sd.keys()))
-    t = sd[sel_key]
-    st.markdown(f"<span class='dim-tag'>Shape: {list(t.shape)}</span> <span class='dim-tag'>Params: {t.numel():,}</span> <span class='dim-tag'>dtype: {t.dtype}</span>", unsafe_allow_html=True)
-    st.plotly_chart(mini_heatmap(t, sel_key, height=350), use_container_width=True)
-    
-    mc1, mc2, mc3 = st.columns(3)
-    arr_f = t.float()
-    mc1.metric("Mean", f"{arr_f.mean():.6f}")
-    mc2.metric("Std Dev", f"{arr_f.std():.6f}")
-    mc3.metric("L2 Norm", f"{torch.norm(arr_f):.4f}")
-    st.markdown("</div>", unsafe_allow_html=True)
+    renderer.render(scene, camera);
+}}
+animate();
+
+window.addEventListener('resize', () => {{
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}});
+</script>
+</body>
+</html>
+"""
+
+components.html(html_code, height=800)
