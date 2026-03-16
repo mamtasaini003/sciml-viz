@@ -193,84 +193,108 @@ with col2:
                 output_ph.plotly_chart(fig_final, use_container_width=True)
                 
         with tab_graph:
-            st.markdown("#### Operational Graph Visualization")
-            st.write("Visualizing mathematical operations, tensor transformations, and normalization steps during a forward pass. Derived from loaded `.pth` topological footprint.")
+            st.markdown("#### 🧊 3D Architecture Diagram (Interactive)")
+            st.write("A bbycroft.net inspired topological map visualizing the geometrical tensor shapes, operations, and information flow.")
+            
+            fig3d = go.Figure()
+            
+            def add_cube(fig, x_center, y_center, z_center, dx, dy, dz, color, name, opacity=0.4):
+                # Defines 8 vertices of a cube centered at (x,y,z) with dimensions (dx, dy, dz)
+                x = [x_center-dx/2, x_center+dx/2, x_center+dx/2, x_center-dx/2, x_center-dx/2, x_center+dx/2, x_center+dx/2, x_center-dx/2]
+                y = [y_center-dy/2, y_center-dy/2, y_center+dy/2, y_center+dy/2, y_center-dy/2, y_center-dy/2, y_center+dy/2, y_center+dy/2]
+                z = [z_center-dz/2, z_center-dz/2, z_center-dz/2, z_center-dz/2, z_center+dz/2, z_center+dz/2, z_center+dz/2, z_center+dz/2]
+                # define the 12 triangles connecting the 8 vertices
+                i = [7, 0, 0, 0, 4, 4, 6, 6, 4, 0, 3, 2]
+                j = [3, 4, 1, 2, 5, 6, 5, 2, 0, 1, 6, 3]
+                k = [0, 7, 2, 3, 6, 7, 1, 1, 5, 5, 7, 6]
+                
+                fig.add_trace(go.Mesh3d(x=x, y=y, z=z, i=i, j=j, k=k,
+                                        color=color, opacity=opacity, name=name, showscale=False,
+                                        hoverinfo='name'))
+                
+                # Add edges for a wireframe look
+                lines_x = [x[0], x[1], x[2], x[3], x[0], x[4], x[5], x[6], x[7], x[4], None, x[1], x[5], None, x[2], x[6], None, x[3], x[7]]
+                lines_y = [y[0], y[1], y[2], y[3], y[0], y[4], y[5], y[6], y[7], y[4], None, y[1], y[5], None, y[2], y[6], None, y[3], y[7]]
+                lines_z = [z[0], z[1], z[2], z[3], z[0], z[4], z[5], z[6], z[7], z[4], None, z[1], z[5], None, z[2], z[6], None, z[3], z[7]]
+                fig.add_trace(go.Scatter3d(x=lines_x, y=lines_y, z=lines_z, mode='lines', line=dict(color='white', width=2), showlegend=False, hoverinfo='skip'))
+
+            def add_arrow(fig, x0, y0, z0, x1, y1, z1, text):
+                fig.add_trace(go.Scatter3d(x=[x0, x1], y=[y0, y1], z=[z0, z1], mode='lines+text', 
+                                           line=dict(color='yellow', width=3), text=["", text], textposition="middle right", showlegend=False))
             
             if detected_type == "FNO":
-                graph_dot = """
-                digraph FNO {
-                    rankdir=LR;
-                    bgcolor="transparent";
-                    node [shape=box, style=filled, fillcolor="#1f77b4", fontcolor=white, fontname="Inter", color="transparent"];
-                    edge [color="#66b3ff", fontcolor="#a0aab2", fontname="Inter"];
-                    
-                    Input -> "Linear Lift (P)" [label=" a(x) "];
-                    "Linear Lift (P)" -> "v0" [label=" (b, c, x, y)"];
-                    
-                    subgraph cluster_f1 {
-                        label="Fourier Layer block (Spectral Conv)";
-                        color="#ff7f0e";
-                        fontcolor="#ff7f0e";
-                        fontname="Inter";
-                        style=dashed;
-                        
-                        "v_in" [shape=point];
-                        "FFT" [fillcolor="#2ca02c", label="Fast Fourier Transform\n 𝓕(v)"];
-                        "Mult" [fillcolor="#d62728", label="Complex Tensor Mult\n R ∙ 𝓕(v)", shape=ellipse];
-                        "IFFT" [fillcolor="#2ca02c", label="Inv Fourier Transform\n 𝓕⁻¹(...)"];
-                        
-                        "Linear" [fillcolor="#9467bd", label="Linear Transform\n (W ∙ v)"];
-                        
-                        "Add" [shape=circle, fillcolor="#8c564b", label="+"];
-                        "Norm" [fillcolor="#7f7f7f", label="Layer Norm"];
-                        "GELU" [fillcolor="#e377c2", label="Activation = σ(...)"];
-                        
-                        "v_in" -> "FFT" [label=" truncate modes"];
-                        "FFT" -> "Mult" [label=" complex weights"];
-                        "Mult" -> "IFFT";
-                        "IFFT" -> "Add" [label=" real tensors"];
-                        
-                        "v_in" -> "Linear" [label=" skip-connection"];
-                        "Linear" -> "Add";
-                        "Add" -> "Norm";
-                        "Norm" -> "GELU";
-                    }
-                    
-                    "v0" -> "v_in" [lhead=cluster_f1];
-                    "GELU" -> "v1" -> "Fourier Layers 2..N" -> "Linear Decode (Q)" -> Output;
-                }
-                """
-                st.graphviz_chart(graph_dot, use_container_width=True)
+                # Layout spacing along X axis
+                # Input -> Linear Lift -> F1 (FFT -> Mult -> IFFT) -> ... -> Decode
+                
+                add_cube(fig3d, 0, 0, 0, 1, 8, 8, "#1f77b4", "Input a(x)\n[64x64x1]")
+                add_arrow(fig3d, 0.5, 0, 0, 2.5, 0, 0, "Lift (Linear)")
+                
+                add_cube(fig3d, 3, 0, 0, 4, 8, 8, "#ff7f0e", "Lifted State v0\n[64x64x32]")
+                add_arrow(fig3d, 3.5, 0, 0, 5.5, 0, 2, "FFT")
+                add_arrow(fig3d, 3.5, 0, 0, 5.5, 0, -3, "Skip (1x1 Conv)")
+                
+                # F1 Spectral Branch
+                add_cube(fig3d, 6, 0, 2, 4, 4, 4, "#2ca02c", "Fourier Modes\n[12x12x32]")
+                add_arrow(fig3d, 6.5, 0, 2, 8.5, 0, 2, "Complex Mult")
+                add_cube(fig3d, 9, 0, 2, 4, 4, 4, "#d62728", "Weighted Modes\n[12x12x32]")
+                add_arrow(fig3d, 9.5, 0, 2, 11.5, 0, 0, "IFFT")
+                
+                # F1 Skip Branch
+                add_cube(fig3d, 6, 0, -3, 4, 8, 8, "#9467bd", "W(v0)\n[64x64x32]")
+                add_arrow(fig3d, 6.5, 0, -3, 11.5, 0, 0, "Add")
+                
+                # Recombined
+                add_cube(fig3d, 12, 0, 0, 4, 8, 8, "#ff7f0e", "State v1 (+GELU)\n[64x64x32]")
+                add_arrow(fig3d, 12.5, 0, 0, 15.5, 0, 0, "Blocks 2..N")
+                
+                # Decode
+                add_cube(fig3d, 16, 0, 0, 4, 8, 8, "#ff7f0e", "State vN\n[64x64x32]")
+                add_arrow(fig3d, 16.5, 0, 0, 18.5, 0, 0, "Decode")
+                add_cube(fig3d, 19, 0, 0, 2, 8, 8, "#8c564b", "Proj Layer 1\n[64x64x128]")
+                add_arrow(fig3d, 19.5, 0, 0, 21.5, 0, 0, "")
+                add_cube(fig3d, 22, 0, 0, 1, 8, 8, "#e377c2", "Output u(x)\n[64x64x1]")
+                
+                fig3d.update_layout(scene=dict(
+                    xaxis=dict(showgrid=False, visible=False),
+                    yaxis=dict(showgrid=False, visible=False),
+                    zaxis=dict(showgrid=False, visible=False),
+                    camera=dict(eye=dict(x=-1.5, y=-2.5, z=1.5)),
+                    aspectmode='data'
+                ), template="plotly_dark", margin=dict(l=0, r=0, b=0, t=30), height=600, paper_bgcolor="rgba(0,0,0,0)")
+                
+                st.plotly_chart(fig3d, use_container_width=True)
                 
             elif detected_type == "DeepONet":
-                graph_dot = """
-                digraph DeepONet {
-                    rankdir=LR;
-                    bgcolor="transparent";
-                    node [shape=box, style=filled, fillcolor="#1f77b4", fontcolor=white, fontname="Inter", color="transparent"];
-                    edge [color="#66b3ff", fontcolor="#a0aab2", fontname="Inter"];
-                    
-                    subgraph cluster_branch {
-                        label="Branch Net"; color="#ff7f0e"; fontcolor="#ff7f0e"; style=dashed; fontname="Inter";
-                        "Input Field (u)" -> "Linear / Conv" -> "Norm 1" -> "Activation 1" -> "Linear (p nodes)" -> "p_branch";
-                    }
-                    
-                    subgraph cluster_trunk {
-                        label="Trunk Net"; color="#2ca02c"; fontcolor="#2ca02c"; style=dashed; fontname="Inter";
-                        "Coordinates (y)" -> "Linear Layer" -> "Norm 2" -> "Activation 2" -> "Linear (p modes)" -> "p_trunk";
-                    }
-                    
-                    "p_branch" -> "Dot Product Operation" [label=" Vector [b] "];
-                    "p_trunk" -> "Dot Product Operation" [label=" Vector [t] "];
-                    
-                    "Dot Product Operation" -> "Bias Addition (+)" -> "Output G(u)(y)";
-                    "Bias Addition (+)" [shape=circle, fillcolor="#d62728"];
-                    "Dot Product Operation" [shape=ellipse, fillcolor="#d62728", label="Σ (b_i × t_i)"];
-                }
-                """
-                st.graphviz_chart(graph_dot, use_container_width=True)
+                # Branch Net
+                add_cube(fig3d, 0, 4, 0, 1, 6, 6, "#1f77b4", "Input Field u\n[Batch, M]")
+                add_arrow(fig3d, 0.5, 4, 0, 3.5, 4, 0, "Branch Forward")
+                add_cube(fig3d, 4, 4, 0, 1, 2, 10, "#ff7f0e", "b_nodes\n[Batch, p]")
+                
+                # Trunk Net
+                add_cube(fig3d, 0, -4, 0, 1, 2, 2, "#1f77b4", "Coordinates y\n[Batch, 2]")
+                add_arrow(fig3d, 0.5, -4, 0, 3.5, -4, 0, "Trunk Forward")
+                add_cube(fig3d, 4, -4, 0, 1, 2, 10, "#2ca02c", "t_nodes\n[Batch, p]")
+                
+                add_arrow(fig3d, 4, 3, 0, 8, 1, 0, "Dot")
+                add_arrow(fig3d, 4, -3, 0, 8, -1, 0, "Product")
+                
+                # Inner product
+                add_cube(fig3d, 8, 0, 0, 1, 4, 4, "#d62728", "Inner Product\n Σ(b * t)")
+                add_arrow(fig3d, 8.5, 0, 0, 10.5, 0, 0, "+ Bias")
+                add_cube(fig3d, 11, 0, 0, 1, 2, 2, "#e377c2", "Output G(u)(y)\n[Batch, 1]")
+                
+                fig3d.update_layout(scene=dict(
+                    xaxis=dict(showgrid=False, visible=False),
+                    yaxis=dict(showgrid=False, visible=False),
+                    zaxis=dict(showgrid=False, visible=False),
+                    camera=dict(eye=dict(x=-1.5, y=-2.5, z=0.5)),
+                    aspectmode='data'
+                ), template="plotly_dark", margin=dict(l=0, r=0, b=0, t=30), height=600, paper_bgcolor="rgba(0,0,0,0)")
+                
+                st.plotly_chart(fig3d, use_container_width=True)
+                
             else:
-                st.info("No standard operations traced for this fully connected/PINN module.")
+                st.info("No 3D Architecture trace configured for this module type.")
                 
         with tab_logs:
             st.markdown(f"```text\n[INFO] Connecting to {repo_url}...\n[INFO] Discovering script {selected_script} dependencies...\n[INFO] Initializing dataset generator...\n[INFO] Allocating model {selected_model} (map_location=cpu)...\n[INFO] Model Instantiated via torch.load()\n[INFO] Executing: python {selected_script} --input_tensor [None, 64, 64]\n...\n[SUCCESS] Exported Output Tensor Shape: torch.Size([1, 64, 64])\n```")
