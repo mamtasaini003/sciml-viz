@@ -185,10 +185,8 @@ fig_overview.add_trace(go.Heatmap(
     ),
     showscale=True,
     colorbar=dict(
-        title="Value",
-        titleside="right",
+        title=dict(text="Value", side="right"),
         tickfont=dict(color="#8b949e"),
-        titlefont=dict(color="#8b949e"),
     ),
 ))
 
