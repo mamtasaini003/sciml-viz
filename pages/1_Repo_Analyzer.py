@@ -81,7 +81,7 @@ with col2:
     if state_dict is not None:
         st.markdown("### 3. Execution & Dashboard")
         
-        tab_weights, tab_inference, tab_logs = st.tabs(["📊 Weights Analyzer", "🚀 Run Script (Pipeline)", "📝 Script Output"])
+        tab_weights, tab_inference, tab_graph, tab_logs = st.tabs(["📊 Weights Analyzer", "🚀 Run Inference", "⚙️ Architecture Map", "📝 Logs"])
         
         with tab_weights:
             st.markdown("#### Internal Tensor Geometries")
@@ -191,6 +191,86 @@ with col2:
                     fig_final.update_layout(title="Predicted Vorticity ω(x,y, T)", template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=30, b=0))
                     
                 output_ph.plotly_chart(fig_final, use_container_width=True)
+                
+        with tab_graph:
+            st.markdown("#### Operational Graph Visualization")
+            st.write("Visualizing mathematical operations, tensor transformations, and normalization steps during a forward pass. Derived from loaded `.pth` topological footprint.")
+            
+            if detected_type == "FNO":
+                graph_dot = """
+                digraph FNO {
+                    rankdir=LR;
+                    bgcolor="transparent";
+                    node [shape=box, style=filled, fillcolor="#1f77b4", fontcolor=white, fontname="Inter", color="transparent"];
+                    edge [color="#66b3ff", fontcolor="#a0aab2", fontname="Inter"];
+                    
+                    Input -> "Linear Lift (P)" [label=" a(x) "];
+                    "Linear Lift (P)" -> "v0" [label=" (b, c, x, y)"];
+                    
+                    subgraph cluster_f1 {
+                        label="Fourier Layer block (Spectral Conv)";
+                        color="#ff7f0e";
+                        fontcolor="#ff7f0e";
+                        fontname="Inter";
+                        style=dashed;
+                        
+                        "v_in" [shape=point];
+                        "FFT" [fillcolor="#2ca02c", label="Fast Fourier Transform\n 𝓕(v)"];
+                        "Mult" [fillcolor="#d62728", label="Complex Tensor Mult\n R ∙ 𝓕(v)", shape=ellipse];
+                        "IFFT" [fillcolor="#2ca02c", label="Inv Fourier Transform\n 𝓕⁻¹(...)"];
+                        
+                        "Linear" [fillcolor="#9467bd", label="Linear Transform\n (W ∙ v)"];
+                        
+                        "Add" [shape=circle, fillcolor="#8c564b", label="+"];
+                        "Norm" [fillcolor="#7f7f7f", label="Layer Norm"];
+                        "GELU" [fillcolor="#e377c2", label="Activation = σ(...)"];
+                        
+                        "v_in" -> "FFT" [label=" truncate modes"];
+                        "FFT" -> "Mult" [label=" complex weights"];
+                        "Mult" -> "IFFT";
+                        "IFFT" -> "Add" [label=" real tensors"];
+                        
+                        "v_in" -> "Linear" [label=" skip-connection"];
+                        "Linear" -> "Add";
+                        "Add" -> "Norm";
+                        "Norm" -> "GELU";
+                    }
+                    
+                    "v0" -> "v_in" [lhead=cluster_f1];
+                    "GELU" -> "v1" -> "Fourier Layers 2..N" -> "Linear Decode (Q)" -> Output;
+                }
+                """
+                st.graphviz_chart(graph_dot, use_container_width=True)
+                
+            elif detected_type == "DeepONet":
+                graph_dot = """
+                digraph DeepONet {
+                    rankdir=LR;
+                    bgcolor="transparent";
+                    node [shape=box, style=filled, fillcolor="#1f77b4", fontcolor=white, fontname="Inter", color="transparent"];
+                    edge [color="#66b3ff", fontcolor="#a0aab2", fontname="Inter"];
+                    
+                    subgraph cluster_branch {
+                        label="Branch Net"; color="#ff7f0e"; fontcolor="#ff7f0e"; style=dashed; fontname="Inter";
+                        "Input Field (u)" -> "Linear / Conv" -> "Norm 1" -> "Activation 1" -> "Linear (p nodes)" -> "p_branch";
+                    }
+                    
+                    subgraph cluster_trunk {
+                        label="Trunk Net"; color="#2ca02c"; fontcolor="#2ca02c"; style=dashed; fontname="Inter";
+                        "Coordinates (y)" -> "Linear Layer" -> "Norm 2" -> "Activation 2" -> "Linear (p modes)" -> "p_trunk";
+                    }
+                    
+                    "p_branch" -> "Dot Product Operation" [label=" Vector [b] "];
+                    "p_trunk" -> "Dot Product Operation" [label=" Vector [t] "];
+                    
+                    "Dot Product Operation" -> "Bias Addition (+)" -> "Output G(u)(y)";
+                    "Bias Addition (+)" [shape=circle, fillcolor="#d62728"];
+                    "Dot Product Operation" [shape=ellipse, fillcolor="#d62728", label="Σ (b_i × t_i)"];
+                }
+                """
+                st.graphviz_chart(graph_dot, use_container_width=True)
+            else:
+                st.info("No standard operations traced for this fully connected/PINN module.")
                 
         with tab_logs:
             st.markdown(f"```text\n[INFO] Connecting to {repo_url}...\n[INFO] Discovering script {selected_script} dependencies...\n[INFO] Initializing dataset generator...\n[INFO] Allocating model {selected_model} (map_location=cpu)...\n[INFO] Model Instantiated via torch.load()\n[INFO] Executing: python {selected_script} --input_tensor [None, 64, 64]\n...\n[SUCCESS] Exported Output Tensor Shape: torch.Size([1, 64, 64])\n```")
