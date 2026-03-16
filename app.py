@@ -231,15 +231,13 @@ fig_overview.update_layout(
         showgrid=False,
         zeroline=False,
         showticklabels=False,
-        title="Forward Pass Direction ↓",
-        titlefont=dict(color="#58a6ff"),
+        title=dict(text="Forward Pass Direction ↓", font=dict(color="#58a6ff")),
     ),
     xaxis=dict(
         showgrid=False,
         zeroline=False,
         showticklabels=False,
-        title=f"Pixel Columns (width={CANVAS_WIDTH})",
-        titlefont=dict(color="#58a6ff"),
+        title=dict(text=f"Pixel Columns (width={CANVAS_WIDTH})", font=dict(color="#58a6ff")),
         constrain="domain",
     ),
 )
