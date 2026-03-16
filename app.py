@@ -7,7 +7,7 @@ import os
 
 st.set_page_config(page_title="FNO Architecture Visualizer", layout="wide", initial_sidebar_state="collapsed")
 
-# Load model data
+# Load model
 model_dir = "models"
 available = [m for m in os.listdir(model_dir) if m.endswith('.pth')] if os.path.exists(model_dir) else []
 if not available:
@@ -17,337 +17,409 @@ if not available:
 selected = available[0]
 sd = torch.load(os.path.join(model_dir, selected), map_location='cpu', weights_only=False)
 
-# Build layer data for JS
-layers_js = []
+# Pre-compute layer metadata for JS
+layers_meta = {}
 for key in sd:
     t = sd[key]
     arr = t.numpy()
-    if np.iscomplexobj(arr):
-        arr = np.abs(arr).astype(np.float32)
-    else:
-        arr = arr.astype(np.float32)
-    flat = arr.flatten()
-    vmin, vmax = float(flat.min()), float(flat.max())
-    rng = vmax - vmin if (vmax - vmin) > 1e-8 else 1.0
-    normalized = ((flat - vmin) / rng)
-    # Downsample for browser: max 2048 pixels per block face
-    n = len(normalized)
-    if n > 2048:
-        step = max(1, n // 2048)
-        normalized = normalized[::step]
-        n = len(normalized)
-    layers_js.append({
+    if np.iscomplexobj(arr): arr = np.abs(arr).astype(np.float32)
+    else: arr = arr.astype(np.float32)
+    layers_meta[key] = {
         'name': key,
         'shape': list(t.shape),
         'params': int(t.numel()),
         'dtype': str(t.dtype),
-        'vmin': round(vmin, 5),
-        'vmax': round(vmax, 5),
-        'mean': round(float(t.float().mean()), 5),
-        'pixels': [round(float(x), 3) for x in normalized],
-        'n_pixels': n,
-    })
+        'vmin': round(float(arr.min()), 5),
+        'vmax': round(float(arr.max()), 5),
+        'mean': round(float(arr.mean()), 5),
+    }
 
-layers_json = json.dumps(layers_js)
+meta_json = json.dumps(layers_meta)
 
-html_code = f"""
+html_code = """
 <!DOCTYPE html>
 <html>
 <head>
 <style>
-* {{ margin:0; padding:0; box-sizing:border-box; }}
-body {{ background: #0d1117; overflow: hidden; font-family: 'Segoe UI', sans-serif; }}
-canvas {{ display: block; }}
-#info-panel {{
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background: #1a1a2e; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
+canvas#c { display: block; }
+
+#info {
     position: fixed; top: 12px; right: 12px;
-    background: rgba(22,27,34,0.95); border: 1px solid #30363d;
-    border-radius: 10px; padding: 18px 22px; color: #c9d1d9;
-    min-width: 280px; max-width: 340px; z-index: 100;
-    backdrop-filter: blur(12px); box-shadow: 0 8px 32px rgba(0,0,0,0.6);
-}}
-#info-panel h2 {{ color: #58a6ff; font-size: 15px; margin-bottom: 10px; border-bottom: 1px solid #30363d; padding-bottom: 8px; }}
-#info-panel .row {{ display: flex; justify-content: space-between; margin: 4px 0; font-size: 13px; }}
-#info-panel .label {{ color: #8b949e; }}
-#info-panel .val {{ color: #f0883e; font-weight: 600; }}
-#title-bar {{
+    background: rgba(22,27,34,0.96); border: 1px solid #30363d;
+    border-radius: 10px; padding: 16px 20px; color: #c9d1d9;
+    width: 300px; z-index: 100; font-size: 13px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+#info h2 { color: #58a6ff; font-size: 14px; margin-bottom: 8px; border-bottom: 1px solid #30363d; padding-bottom: 6px; }
+#info .r { display:flex; justify-content:space-between; margin:3px 0; }
+#info .l { color:#8b949e; }
+#info .v { color:#f0883e; font-weight:600; }
+
+#hdr {
     position: fixed; top: 12px; left: 12px;
-    background: rgba(22,27,34,0.95); border: 1px solid #30363d;
-    border-radius: 10px; padding: 14px 20px; z-index: 100; color: #c9d1d9;
-    backdrop-filter: blur(12px);
-}}
-#title-bar h1 {{ font-size: 18px; color: #58a6ff; margin: 0; }}
-#title-bar p {{ font-size: 12px; color: #8b949e; margin-top: 4px; }}
-#controls-hint {{
-    position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+    background: rgba(22,27,34,0.96); border: 1px solid #30363d;
+    border-radius: 10px; padding: 12px 18px; z-index: 100; color: #c9d1d9;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+#hdr h1 { font-size: 16px; color: #58a6ff; margin:0; }
+#hdr p { font-size: 11px; color: #8b949e; margin-top:3px; }
+
+#legend {
+    position: fixed; bottom: 12px; left: 12px;
+    background: rgba(22,27,34,0.96); border: 1px solid #30363d;
+    border-radius: 10px; padding: 12px 16px; z-index: 100; color: #c9d1d9;
+    font-size: 11px; box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+.leg-item { display:flex; align-items:center; margin: 3px 0; }
+.leg-box { width: 14px; height: 14px; border-radius: 3px; margin-right: 8px; border: 1px solid rgba(255,255,255,0.2); }
+
+#hint {
+    position: fixed; bottom: 12px; right: 12px;
     background: rgba(22,27,34,0.9); border: 1px solid #30363d;
-    border-radius: 20px; padding: 8px 20px; color: #8b949e;
-    font-size: 12px; z-index: 100;
-}}
+    border-radius: 20px; padding: 7px 16px; color: #8b949e;
+    font-size: 11px; z-index: 100;
+}
 </style>
 </head>
 <body>
 
-<div id="title-bar">
-    <h1>⚛️ FNO Architecture</h1>
-    <p>Fourier Neural Operator — Interactive 3D View</p>
+<div id="hdr">
+    <h1>⚛️ Fourier Neural Operator</h1>
+    <p>2D FNO for Navier-Stokes — Interactive Architecture</p>
 </div>
 
-<div id="info-panel">
-    <h2 id="panel-title">Hover over a block</h2>
-    <div class="row"><span class="label">Layer:</span><span class="val" id="p-name">—</span></div>
-    <div class="row"><span class="label">Shape:</span><span class="val" id="p-shape">—</span></div>
-    <div class="row"><span class="label">Parameters:</span><span class="val" id="p-params">—</span></div>
-    <div class="row"><span class="label">Type:</span><span class="val" id="p-dtype">—</span></div>
-    <div class="row"><span class="label">Value Range:</span><span class="val" id="p-range">—</span></div>
-    <div class="row"><span class="label">Mean:</span><span class="val" id="p-mean">—</span></div>
-    <canvas id="mini-heatmap" width="256" height="40" style="margin-top:10px; border-radius:4px; width:100%;"></canvas>
+<div id="info">
+    <h2 id="it">Hover a component</h2>
+    <div class="r"><span class="l">Layer:</span><span class="v" id="in">—</span></div>
+    <div class="r"><span class="l">Shape:</span><span class="v" id="is">—</span></div>
+    <div class="r"><span class="l">Parameters:</span><span class="v" id="ip">—</span></div>
+    <div class="r"><span class="l">Type:</span><span class="v" id="id">—</span></div>
+    <div class="r"><span class="l">Range:</span><span class="v" id="ir">—</span></div>
+    <div class="r"><span class="l">Operation:</span><span class="v" id="io">—</span></div>
 </div>
 
-<div id="controls-hint">
-    🖱️ Drag to rotate &nbsp;|&nbsp; Scroll to zoom &nbsp;|&nbsp; Right-drag to pan &nbsp;|&nbsp; Hover blocks for details
+<div id="legend">
+    <div style="font-weight:600; margin-bottom:5px; color:#58a6ff;">Legend</div>
+    <div class="leg-item"><div class="leg-box" style="background:#4a9eff;"></div>Intermediate (data flow)</div>
+    <div class="leg-item"><div class="leg-box" style="background:#2ea043;"></div>Weight matrix</div>
+    <div class="leg-item"><div class="leg-box" style="background:#f0883e;"></div>Spectral Conv weights (ℂ)</div>
+    <div class="leg-item"><div class="leg-box" style="background:#a371f7;"></div>Bias vector</div>
+    <div class="leg-item"><div class="leg-box" style="background:#da3633;"></div>Addition / GELU</div>
+    <div class="leg-item"><div class="leg-box" style="background:#8b949e;"></div>FFT / IFFT operation</div>
 </div>
+
+<div id="hint">🖱 Drag to rotate · Scroll to zoom · Right-drag to pan</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script>
-const LAYERS = {layers_json};
+const META = """ + meta_json + """;
 
-// Plasma colormap (approximate)
-function plasma(t) {{
-    t = Math.max(0, Math.min(1, t));
-    const r = Math.min(1, 0.05 + t * 2.2 - t * t * 1.4);
-    const g = Math.min(1, Math.max(0, -0.7 + t * 2.8 - t * t * 1.2));
-    const b = Math.min(1, Math.max(0, 0.53 + t * 0.7 - t * t * 1.8));
-    return [r, g, b];
-}}
-
-// Scene setup
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0d1117);
-scene.fog = new THREE.FogExp2(0x0d1117, 0.008);
+scene.background = new THREE.Color(0x1a1a2e);
 
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 500);
-camera.position.set(30, 25, 50);
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 600);
+camera.position.set(55, 30, 55);
 
-const renderer = new THREE.WebGLRenderer({{ antialias: true }});
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 document.body.appendChild(renderer.domElement);
 
 const controls = new THREE.OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.target.set(0, -15, 0);
+controls.dampingFactor = 0.06;
+controls.target.set(0, -40, 0);
 
 // Lighting
-scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-const dl = new THREE.DirectionalLight(0xffffff, 0.6);
-dl.position.set(20, 30, 20);
-scene.add(dl);
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const d1 = new THREE.DirectionalLight(0xffffff, 0.5);
+d1.position.set(30, 50, 30);
+scene.add(d1);
+const d2 = new THREE.DirectionalLight(0x8888ff, 0.2);
+d2.position.set(-20, 30, -20);
+scene.add(d2);
 
-// Group categories
-const categories = {{
-    'fc0': {{ color: 0x1f77b4, label: 'Input Lifting', xOffset: 0 }},
-    'conv0': {{ color: 0x2ca02c, label: 'Spectral Conv 0', xOffset: 0 }},
-    'w0': {{ color: 0x9467bd, label: 'Skip Conv 0', xOffset: 12 }},
-    'conv1': {{ color: 0x2ca02c, label: 'Spectral Conv 1', xOffset: 0 }},
-    'w1': {{ color: 0x9467bd, label: 'Skip Conv 1', xOffset: 12 }},
-    'conv2': {{ color: 0xff7f0e, label: 'Spectral Conv 2', xOffset: 0 }},
-    'w2': {{ color: 0xd62728, label: 'Skip Conv 2', xOffset: 12 }},
-    'conv3': {{ color: 0xff7f0e, label: 'Spectral Conv 3', xOffset: 0 }},
-    'w3': {{ color: 0xd62728, label: 'Skip Conv 3', xOffset: 12 }},
-    'fc1': {{ color: 0xe377c2, label: 'Decode Layer 1', xOffset: 0 }},
-    'fc2': {{ color: 0x8c564b, label: 'Decode Layer 2', xOffset: 0 }},
-}};
+// Colors — matching bbycroft style: solid, distinct, no gradients
+const C = {
+    inter:   0x4a9eff, // intermediate data (blue)
+    weight:  0x2ea043, // weight matrices (green)
+    spectral:0xf0883e, // spectral conv complex weights (orange)
+    bias:    0xa371f7, // bias vectors (purple)
+    op:      0xda3633, // operations like add, gelu (red)
+    fft:     0x8b949e, // FFT/IFFT (grey)
+};
 
-function getCat(name) {{
-    for (const [prefix, cat] of Object.entries(categories)) {{
-        if (name.startsWith(prefix)) return cat;
-    }}
-    return {{ color: 0x58a6ff, label: 'Other', xOffset: 0 }};
-}}
-
-// Create blocks
-const blockGroup = new THREE.Group();
-const blockMeshes = [];
+const allMeshes = [];
 const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
+const mouse = new THREE.Vector2(-999, -999);
 
-let yPos = 0;
-const SCALE = 0.0008; // scale params to visual size
-
-LAYERS.forEach((layer, idx) => {{
-    const cat = getCat(layer.name);
-    const vol = Math.cbrt(layer.params * SCALE) * 3;
-    const w = Math.max(1.5, vol);
-    const h = Math.max(0.6, vol * 0.4);
-    const d = Math.max(1.5, vol);
-    
-    // Create geometry with per-face vertex colors from actual weights
-    const geo = new THREE.BoxGeometry(w, h, d, 
-        Math.min(32, Math.ceil(Math.sqrt(layer.n_pixels))),
-        1,
-        Math.min(32, Math.ceil(Math.sqrt(layer.n_pixels)))
-    );
-    
-    // Apply pixel colors to vertices
-    const count = geo.attributes.position.count;
-    const colors = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {{
-        const pixIdx = i % layer.n_pixels;
-        const [r, g, b] = plasma(layer.pixels[pixIdx]);
-        colors[i * 3] = r;
-        colors[i * 3 + 1] = g;
-        colors[i * 3 + 2] = b;
-    }}
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    
-    const mat = new THREE.MeshPhongMaterial({{
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.92,
-        shininess: 60,
-    }});
-    
+// ─── Block builder ───
+function mkBlock(x, y, z, w, h, d, color, name, meta_key, opDesc, opacity) {
+    opacity = opacity || 0.85;
+    const geo = new THREE.BoxGeometry(w, h, d);
+    const mat = new THREE.MeshPhongMaterial({ color: color, transparent: true, opacity: opacity, shininess: 30 });
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(cat.xOffset, yPos, 0);
-    mesh.userData = {{ layerIdx: idx, layerData: layer, cat: cat }};
+    mesh.position.set(x, y, z);
+    mesh.userData = { name: name, meta_key: meta_key, opDesc: opDesc, baseColor: color, baseOpacity: opacity };
+    scene.add(mesh);
+    allMeshes.push(mesh);
+
+    // Thin wireframe
+    const edges = new THREE.EdgesGeometry(geo);
+    const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.15 }));
+    line.position.copy(mesh.position);
+    scene.add(line);
+    return mesh;
+}
+
+// ─── Label builder ───  
+function mkLabel(x, y, z, text, size, color) {
+    const cv = document.createElement('canvas');
+    cv.width = 512; cv.height = 64;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = color || '#c9d1d9';
+    ctx.font = (size || 24) + 'px Segoe UI';
+    ctx.fillText(text, 4, 40);
+    const tex = new THREE.CanvasTexture(cv);
+    const sp = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.8 });
+    const spr = new THREE.Sprite(sp);
+    spr.scale.set(10, 1.2, 1);
+    spr.position.set(x, y, z);
+    scene.add(spr);
+}
+
+// ─── Connection lines ───
+function mkLine(pts, color, dashed) {
+    const geo = new THREE.BufferGeometry().setFromPoints(pts.map(p => new THREE.Vector3(p[0], p[1], p[2])));
+    let mat;
+    if (dashed) {
+        mat = new THREE.LineDashedMaterial({ color: color, dashSize: 0.5, gapSize: 0.3, transparent: true, opacity: 0.5 });
+    } else {
+        mat = new THREE.LineBasicMaterial({ color: color, transparent: true, opacity: 0.4 });
+    }
+    const line = new THREE.Line(geo, mat);
+    if (dashed) line.computeLineDistances();
+    scene.add(line);
+}
+
+// ─── Section labels ───
+function mkSection(y, text) {
+    mkLabel(-25, y, 0, text, 28, '#58a6ff');
+}
+
+// ══════════════════════════════════════════════════════════════
+// LAY OUT THE FNO ARCHITECTURE
+// Center X=0 is the residual stream (intermediate values)
+// Weights go to the LEFT (negative X)
+// Biases are small blocks next to weights
+// ══════════════════════════════════════════════════════════════
+
+let Y = 0;
+const CELL = 1.2; // unit cell size
+const GAP = 4;    // gap between major sections
+const W = 32;     // model width (channels)
+const M = 12;     // fourier modes
+
+// ───────── INPUT ─────────
+mkSection(Y + 1, '── Input ──');
+mkBlock(0, Y, 0, 8, 1, 8, C.inter, 'Input Field a(x)', null, 'Raw PDE input [B, 64, 64, 1]');
+mkLabel(12, Y, 0, 'a(x)  [B, 64, 64, 1]', 20);
+Y -= GAP;
+
+// ───────── LIFTING (fc0) ─────────
+mkSection(Y + 1, '── Lift ──');
+// Weight to the left
+mkBlock(-12, Y, 0, 4, 4, 1.5, C.weight, 'Lift Weight (P)', 'fc0.weight', 'Linear: [3, 32]  →  Multiply');
+mkLabel(-20, Y, 0, 'fc0.weight [3×32]', 18);
+// Bias
+mkBlock(-6, Y, 0, 1, 4, 1.5, C.bias, 'Lift Bias', 'fc0.bias', 'Add bias [32]');
+// Arrow from weight to intermediate
+mkLine([[-6, Y, 0], [-3, Y, 0]], 0xffffff, false);
+// Intermediate (result)
+mkBlock(0, Y, 0, 8, 4, 8, C.inter, 'v₀ (Lifted)', null, 'Projected features [B, 64, 64, 32]');
+mkLabel(12, Y, 0, 'v₀  [B, 64, 64, 32]', 20);
+
+Y -= GAP + 2;
+
+// ───────── FOURIER LAYERS ×4 ─────────
+for (let layer = 0; layer < 4; layer++) {
+    const ly = Y;
+    const isLast = (layer === 3);
+    mkSection(ly + 2, '── Fourier Layer ' + layer + ' ──');
     
-    blockGroup.add(mesh);
-    blockMeshes.push(mesh);
+    // ── SPECTRAL PATH (left branch) ──
+    const specX = -18;
     
-    // Edge wireframe
-    const edges = new THREE.EdgesGeometry(new THREE.BoxGeometry(w + 0.05, h + 0.05, d + 0.05));
-    const lineMat = new THREE.LineBasicMaterial({{ color: cat.color, transparent: true, opacity: 0.7 }});
-    const wireframe = new THREE.LineSegments(edges, lineMat);
-    wireframe.position.copy(mesh.position);
-    blockGroup.add(wireframe);
+    // FFT block
+    mkBlock(specX, ly, 0, 3, 2, 3, C.fft, 'FFT (Layer ' + layer + ')', null, '2D Fast Fourier Transform');
+    mkLabel(specX - 8, ly, 0, 'FFT  𝓕(v)', 18);
     
-    // Label sprite
-    const canvas = document.createElement('canvas');
-    canvas.width = 512; canvas.height = 64;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#c9d1d9';
-    ctx.font = 'bold 28px Segoe UI';
-    ctx.fillText(layer.name, 10, 38);
-    ctx.font = '22px Segoe UI';
-    ctx.fillStyle = '#8b949e';
-    ctx.fillText('[' + layer.shape.join('×') + ']', 10 + ctx.measureText(layer.name + '  ').width * 0.9, 38);
+    // Spectral weight R_k (complex) — weights1
+    mkBlock(specX, ly - 4, -4, 3, 3, 3, C.spectral, 'R₊ weights (L' + layer + ')', 'conv' + layer + '.weights1', 'Complex multiply [' + W + ',' + W + ',' + M + ',' + M + ']');
+    mkLabel(specX - 10, ly - 4, -4, 'conv' + layer + '.weights1', 16, '#f0883e');
     
-    const tex = new THREE.CanvasTexture(canvas);
-    const spriteMat = new THREE.SpriteMaterial({{ map: tex, transparent: true, opacity: 0.85 }});
-    const sprite = new THREE.Sprite(spriteMat);
-    sprite.scale.set(8, 1, 1);
-    sprite.position.set(cat.xOffset - w/2 - 5, yPos, 0);
-    blockGroup.add(sprite);
+    // Spectral weight R_k — weights2
+    mkBlock(specX, ly - 4, 4, 3, 3, 3, C.spectral, 'R₋ weights (L' + layer + ')', 'conv' + layer + '.weights2', 'Complex multiply (neg freq)');
+    mkLabel(specX - 10, ly - 4, 4, 'conv' + layer + '.weights2', 16, '#f0883e');
     
-    // Connection lines to next block
-    if (idx < LAYERS.length - 1) {{
-        const nextCat = getCat(LAYERS[idx + 1].name);
-        const nextVol = Math.cbrt(LAYERS[idx + 1].params * SCALE) * 3;
-        const nextH = Math.max(0.6, nextVol * 0.4);
-        const gap = h/2 + 0.3;
-        const nextY = yPos - h/2 - nextH/2 - 1.8;
+    // IFFT
+    mkBlock(specX, ly - 8, 0, 3, 2, 3, C.fft, 'IFFT (Layer ' + layer + ')', null, 'Inverse FFT  𝓕⁻¹');
+    mkLabel(specX - 8, ly - 8, 0, 'IFFT  𝓕⁻¹', 18);
+    
+    // Spectral path connections
+    mkLine([[0, ly + 2, 0], [specX, ly + 2, 0], [specX, ly + 1, 0]], 0x8b949e, true); // from residual to FFT
+    mkLine([[specX, ly - 1, 0], [specX, ly - 2.5, -4]], 0xf0883e, false); // FFT to weights1
+    mkLine([[specX, ly - 1, 0], [specX, ly - 2.5, 4]], 0xf0883e, false);  // FFT to weights2
+    mkLine([[specX, ly - 5.5, -4], [specX, ly - 7, 0]], 0xf0883e, false); // weights1 to IFFT
+    mkLine([[specX, ly - 5.5, 4], [specX, ly - 7, 0]], 0xf0883e, false);  // weights2 to IFFT
+    mkLine([[specX, ly - 9, 0], [specX, ly - 10, 0], [-3, ly - 10, 0]], 0x8b949e, true); // IFFT back to add
+    
+    // ── SKIP PATH (right branch) ──
+    const skipX = 14;
+    
+    // 1×1 Conv weight
+    mkBlock(skipX, ly - 3, 0, 4, 4, 1.5, C.weight, 'W skip weight (L' + layer + ')', 'w' + layer + '.weight', '1×1 Conv [' + W + ',' + W + ',1,1]');
+    mkLabel(skipX + 6, ly - 3, 0, 'w' + layer + '.weight', 18);
+    
+    // 1×1 Conv bias
+    mkBlock(skipX + 6, ly - 3, 0, 1, 4, 1.5, C.bias, 'W skip bias (L' + layer + ')', 'w' + layer + '.bias', 'Bias [' + W + ']');
+    
+    // Skip connection line from residual
+    mkLine([[3, ly + 1, 0], [skipX, ly + 1, 0], [skipX, ly - 1, 0]], 0x2ea043, true);
+    // Skip back to add
+    mkLine([[skipX, ly - 5, 0], [skipX, ly - 10, 0], [3, ly - 10, 0]], 0x2ea043, true);
+    
+    // ── ADD node ──
+    mkBlock(0, ly - 10, 0, 4, 2, 4, C.op, '⊕ Add (L' + layer + ')', null, 'Spectral + Skip residual');
+    mkLabel(6, ly - 10, 0, '⊕  Add', 20, '#da3633');
+    
+    if (!isLast) {
+        // GELU
+        mkBlock(0, ly - 13, 0, 4, 1.5, 4, C.op, 'GELU (L' + layer + ')', null, 'σ(x) = x·Φ(x)  non-linearity');
+        mkLabel(6, ly - 13, 0, 'GELU  σ', 20, '#da3633');
         
-        const points = [
-            new THREE.Vector3(cat.xOffset, yPos - h/2, 0),
-            new THREE.Vector3(cat.xOffset, yPos - h/2 - 0.9, 0),
-            new THREE.Vector3(nextCat.xOffset, nextY + nextH/2 + 0.9, 0),
-            new THREE.Vector3(nextCat.xOffset, nextY + nextH/2, 0),
-        ];
-        const curve = new THREE.CatmullRomCurve3(points);
-        const lineGeo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(20));
-        const lineMat2 = new THREE.LineBasicMaterial({{ color: 0x30363d, linewidth: 1 }});
-        blockGroup.add(new THREE.Line(lineGeo, lineMat2));
-    }}
-    
-    yPos -= h + 1.8;
-}});
+        // Output intermediate
+        mkBlock(0, ly - 16, 0, 8, 4, 8, C.inter, 'v' + (layer + 1), null, 'Intermediate [B, 64, 64, 32]');
+        mkLabel(12, ly - 16, 0, 'v' + (layer+1) + '  [B, 64, 64, 32]', 20);
+        
+        // Vertical residual line
+        mkLine([[0, ly - 18, 0], [0, ly - 20, 0]], 0x4a9eff, false);
+        
+        Y = ly - 21;
+    } else {
+        // Last layer has no GELU — output goes straight to decode
+        mkBlock(0, ly - 13, 0, 8, 4, 8, C.inter, 'v_K (final features)', null, 'Final features [B, 64, 64, 32]');
+        mkLabel(12, ly - 13, 0, 'v_K  [B, 64, 64, 32]', 20);
+        Y = ly - 18;
+    }
+}
 
-scene.add(blockGroup);
+Y -= GAP;
 
-// Hover logic
-let hoveredMesh = null;
+// ───────── DECODE ─────────
+mkSection(Y + 1, '── Decode ──');
 
-function onMouseMove(e) {{
+// fc1 weight
+mkBlock(-12, Y, 0, 5, 5, 1.5, C.weight, 'Decode W₁', 'fc1.weight', 'Linear: [32 → 128]');
+mkLabel(-20, Y, 0, 'fc1.weight [32×128]', 18);
+mkBlock(-6, Y, 0, 1, 5, 1.5, C.bias, 'Decode b₁', 'fc1.bias', 'Bias [128]');
+mkLine([[-6, Y, 0], [-3, Y, 0]], 0xffffff, false);
+mkBlock(0, Y, 0, 8, 5, 8, C.inter, 'Decoded (128)', null, '[B, 64, 64, 128]');
+mkLabel(12, Y, 0, '[B, 64, 64, 128]', 20);
+
+Y -= GAP;
+
+// GELU
+mkBlock(0, Y, 0, 4, 1.5, 4, C.op, 'GELU', null, 'σ(x) activation');
+mkLabel(6, Y, 0, 'GELU', 18, '#da3633');
+
+Y -= GAP;
+
+// fc2 weight
+mkBlock(-12, Y, 0, 4, 2, 1.5, C.weight, 'Output W₂', 'fc2.weight', 'Linear: [128 → 1]');
+mkLabel(-20, Y, 0, 'fc2.weight [128×1]', 18);
+mkBlock(-6, Y, 0, 1, 2, 1.5, C.bias, 'Output b₂', 'fc2.bias', 'Bias [1]');
+mkLine([[-6, Y, 0], [-3, Y, 0]], 0xffffff, false);
+mkBlock(0, Y, 0, 8, 1, 8, C.inter, 'Output u(x)', null, 'Predicted solution [B, 64, 64, 1]');
+mkLabel(12, Y, 0, 'u(x)  [B, 64, 64, 1]', 20);
+
+mkSection(Y - 3, '── Output ──');
+
+
+// ══════════════════════════════════════════════════════════════
+// INTERACTION
+// ══════════════════════════════════════════════════════════════
+
+let hovered = null;
+
+window.addEventListener('mousemove', e => {
     mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-}}
-window.addEventListener('mousemove', onMouseMove);
+});
 
-function updateInfoPanel(data) {{
-    if (!data) {{
-        document.getElementById('panel-title').textContent = 'Hover over a block';
-        document.getElementById('p-name').textContent = '—';
-        document.getElementById('p-shape').textContent = '—';
-        document.getElementById('p-params').textContent = '—';
-        document.getElementById('p-dtype').textContent = '—';
-        document.getElementById('p-range').textContent = '—';
-        document.getElementById('p-mean').textContent = '—';
+function updatePanel(ud) {
+    if (!ud) {
+        document.getElementById('it').textContent = 'Hover a component';
+        ['in','is','ip','id','ir','io'].forEach(i => document.getElementById(i).textContent = '—');
         return;
-    }}
-    const layer = data.layerData;
-    document.getElementById('panel-title').textContent = data.cat.label;
-    document.getElementById('p-name').textContent = layer.name;
-    document.getElementById('p-shape').textContent = '[' + layer.shape.join(' × ') + ']';
-    document.getElementById('p-params').textContent = layer.params.toLocaleString();
-    document.getElementById('p-dtype').textContent = layer.dtype;
-    document.getElementById('p-range').textContent = layer.vmin + ' → ' + layer.vmax;
-    document.getElementById('p-mean').textContent = layer.mean.toString();
+    }
+    document.getElementById('it').textContent = ud.name;
+    document.getElementById('io').textContent = ud.opDesc || '—';
     
-    // Mini heatmap
-    const cv = document.getElementById('mini-heatmap');
-    const ctx = cv.getContext('2d');
-    const w = cv.width, h = cv.height;
-    ctx.clearRect(0, 0, w, h);
-    const px = layer.pixels;
-    const cols = w;
-    const rows = Math.ceil(px.length / cols);
-    const pw = w / cols, ph = h / Math.max(1, rows);
-    for (let i = 0; i < px.length; i++) {{
-        const [r, g, b] = plasma(px[i]);
-        ctx.fillStyle = `rgb(${{Math.floor(r*255)}},${{Math.floor(g*255)}},${{Math.floor(b*255)}})`;
-        const col = i % cols, row = Math.floor(i / cols);
-        ctx.fillRect(col * pw, row * ph, Math.ceil(pw), Math.ceil(ph));
-    }}
-}}
+    if (ud.meta_key && META[ud.meta_key]) {
+        const m = META[ud.meta_key];
+        document.getElementById('in').textContent = m.name;
+        document.getElementById('is').textContent = '[' + m.shape.join(' × ') + ']';
+        document.getElementById('ip').textContent = m.params.toLocaleString();
+        document.getElementById('id').textContent = m.dtype;
+        document.getElementById('ir').textContent = m.vmin + ' → ' + m.vmax;
+    } else {
+        document.getElementById('in').textContent = ud.name;
+        document.getElementById('is').textContent = '—';
+        document.getElementById('ip').textContent = '—';
+        document.getElementById('id').textContent = '—';
+        document.getElementById('ir').textContent = '—';
+    }
+}
 
-// Animation loop
-function animate() {{
+function animate() {
     requestAnimationFrame(animate);
     controls.update();
     
-    // Raycast for hover
     raycaster.setFromCamera(mouse, camera);
-    const intersects = raycaster.intersectObjects(blockMeshes);
+    const hits = raycaster.intersectObjects(allMeshes);
     
-    if (hoveredMesh) {{
-        hoveredMesh.material.opacity = 0.92;
-        hoveredMesh.material.emissive = new THREE.Color(0x000000);
-    }}
+    // Reset previous
+    if (hovered) {
+        hovered.material.opacity = hovered.userData.baseOpacity;
+        hovered.material.emissive.setHex(0x000000);
+    }
     
-    if (intersects.length > 0) {{
-        hoveredMesh = intersects[0].object;
-        hoveredMesh.material.opacity = 1.0;
-        hoveredMesh.material.emissive = new THREE.Color(hoveredMesh.userData.cat.color);
-        hoveredMesh.material.emissiveIntensity = 0.3;
-        updateInfoPanel(hoveredMesh.userData);
-        document.body.style.cursor = 'pointer';
-    }} else {{
-        hoveredMesh = null;
-        updateInfoPanel(null);
-        document.body.style.cursor = 'default';
-    }}
+    if (hits.length > 0) {
+        hovered = hits[0].object;
+        hovered.material.opacity = 1.0;
+        hovered.material.emissive.setHex(hovered.userData.baseColor);
+        hovered.material.emissiveIntensity = 0.25;
+        updatePanel(hovered.userData);
+        renderer.domElement.style.cursor = 'pointer';
+    } else {
+        hovered = null;
+        updatePanel(null);
+        renderer.domElement.style.cursor = 'default';
+    }
     
     renderer.render(scene, camera);
-}}
+}
 animate();
 
-window.addEventListener('resize', () => {{
+window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
-}});
+});
 </script>
 </body>
 </html>
