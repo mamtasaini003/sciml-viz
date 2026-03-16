@@ -95,6 +95,170 @@ except Exception as e:
 param_count = sum(p.numel() for p in state_dict.values())
 st.markdown(f"<p style='text-align: center; color: #8b949e;'>Loaded <b>{selected_model}</b> successfully (Total Connectome: {param_count:,} Parameters)</p>", unsafe_allow_html=True)
 
+# =====================================================================
+# FULL MODEL OVERVIEW — bbycroft.net style bird's-eye
+# =====================================================================
+st.markdown("""
+<div class='layer-box' style='max-width: 100%; margin-top: 20px;'>
+    <h2 style='text-align: center;'>🗺️ Full Model Overview — Every Weight Pixel</h2>
+    <div class='layer-desc' style='text-align: center;'>
+        The entire neural operator laid out vertically. Each colored block is a real layer from the checkpoint — 
+        every single pixel is a trained parameter value. Hover anywhere to inspect. 
+        Blocks are arranged top-to-bottom following the forward pass order.
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# Build a composite tiled canvas
+CANVAS_WIDTH = 256  # Fixed pixel-width for the overview strip
+
+layer_colors = {
+    "fc0":   "#1f77b4",
+    "conv0": "#2ca02c", "w0": "#9467bd",
+    "conv1": "#2ca02c", "w1": "#9467bd",
+    "conv2": "#ff7f0e", "w2": "#d62728",
+    "conv3": "#ff7f0e", "w3": "#d62728",
+    "fc1":   "#e377c2",
+    "fc2":   "#8c564b",
+    "branch":"#ff7f0e",
+    "trunk": "#2ca02c",
+    "output":"#d62728",
+}
+
+def get_layer_color(key):
+    for prefix, color in layer_colors.items():
+        if key.startswith(prefix):
+            return color
+    return "#58a6ff"
+
+# Prepare all layers as flattened rows
+canvas_rows = []
+annotations = []
+layer_boundaries = []
+current_y = 0
+
+for key in state_dict.keys():
+    tensor = state_dict[key]
+    arr = tensor.numpy()
+    if np.iscomplexobj(arr):
+        arr = np.abs(arr)
+    arr = arr.flatten().astype(np.float32)
+    
+    # Pad or reshape to CANVAS_WIDTH columns
+    n = len(arr)
+    n_rows = max(1, int(np.ceil(n / CANVAS_WIDTH)))
+    padded = np.full(n_rows * CANVAS_WIDTH, np.nan, dtype=np.float32)
+    padded[:n] = arr
+    block = padded.reshape(n_rows, CANVAS_WIDTH)
+    
+    # Track annotation position (center of this block)
+    annotations.append({
+        "text": f"<b>{key}</b><br>{list(tensor.shape)} · {n:,} params",
+        "y": current_y + n_rows // 2.0,
+        "color": get_layer_color(key),
+    })
+    
+    layer_boundaries.append(current_y)
+    canvas_rows.append(block)
+    current_y += n_rows + 2  # 2-row gap between layers
+
+# Assemble the full canvas grid
+gap = np.full((2, CANVAS_WIDTH), np.nan)
+all_blocks = []
+for i, block in enumerate(canvas_rows):
+    all_blocks.append(block)
+    if i < len(canvas_rows) - 1:
+        all_blocks.append(gap)
+full_canvas = np.vstack(all_blocks)
+
+# Build Plotly figure
+fig_overview = go.Figure()
+
+fig_overview.add_trace(go.Heatmap(
+    z=full_canvas,
+    colorscale="Plasma",
+    hovertemplate=(
+        "<b>Pixel Position</b><br>"
+        "Row: %{y}, Col: %{x}<br>"
+        "<b>Weight Value:</b> %{z:.6f}"
+        "<extra></extra>"
+    ),
+    showscale=True,
+    colorbar=dict(
+        title="Value",
+        titleside="right",
+        tickfont=dict(color="#8b949e"),
+        titlefont=dict(color="#8b949e"),
+    ),
+))
+
+# Add layer label annotations on the left
+for ann in annotations:
+    fig_overview.add_annotation(
+        x=-15, y=ann["y"],
+        text=ann["text"],
+        showarrow=True,
+        arrowhead=2,
+        arrowcolor=ann["color"],
+        arrowwidth=2,
+        ax=-120, ay=0,
+        font=dict(size=11, color=ann["color"]),
+        align="right",
+        bgcolor="rgba(13,17,23,0.85)",
+        bordercolor=ann["color"],
+        borderwidth=1,
+        borderpad=4,
+    )
+
+# Add colored boundary lines
+for i, y_pos in enumerate(layer_boundaries):
+    color = annotations[i]["color"]
+    fig_overview.add_shape(
+        type="line",
+        x0=-5, x1=CANVAS_WIDTH + 5,
+        y0=y_pos - 0.5, y1=y_pos - 0.5,
+        line=dict(color=color, width=1.5, dash="dot"),
+    )
+
+total_height = max(800, full_canvas.shape[0] * 3)
+
+fig_overview.update_layout(
+    template="plotly_dark",
+    plot_bgcolor="#0d1117",
+    paper_bgcolor="#0d1117",
+    margin=dict(l=180, r=30, t=40, b=30),
+    height=total_height,
+    yaxis=dict(
+        autorange="reversed",
+        showgrid=False,
+        zeroline=False,
+        showticklabels=False,
+        title="Forward Pass Direction ↓",
+        titlefont=dict(color="#58a6ff"),
+    ),
+    xaxis=dict(
+        showgrid=False,
+        zeroline=False,
+        showticklabels=False,
+        title=f"Pixel Columns (width={CANVAS_WIDTH})",
+        titlefont=dict(color="#58a6ff"),
+        constrain="domain",
+    ),
+)
+
+st.plotly_chart(fig_overview, use_container_width=True)
+
+# Mini stats bar
+ov_c1, ov_c2, ov_c3, ov_c4 = st.columns(4)
+ov_c1.metric("Total Layers", len(state_dict))
+ov_c2.metric("Total Parameters", f"{param_count:,}")
+ov_c3.metric("Canvas Size", f"{full_canvas.shape[0]} × {CANVAS_WIDTH}")
+ov_c4.metric("Model File", f"{os.path.getsize(model_path)/1024:.1f} KB")
+
+st.markdown("---")
+
+# =====================================================================
+
 # --- RENDER ENGINE ---
 def render_matrix_heatmap(tensor, tensor_name):
     """
