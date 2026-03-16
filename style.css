@@ -1,0 +1,113 @@
+/* SciML Visualizer Dark Theme */
+:root {
+    --primary: #1f77b4;
+    --secondary: #ff7f0e;
+    --bg-gradient: linear-gradient(135deg, #0c0c0c, #1a1a2e);
+    --card-bg: rgba(255, 255, 255, 0.05);
+    --text-primary: #f0f4f8;
+    --text-muted: #a0aab2;
+}
+
+body {
+    background: var(--bg-gradient);
+    color: var(--text-primary);
+    font-family: 'Inter', sans-serif;
+}
+
+/* Make Streamlit background transparent */
+.stApp {
+    background: var(--bg-gradient);
+    color: var(--text-primary);
+}
+
+.stApp header {
+    background: transparent !important;
+}
+
+/* Metric cards styling */
+.metric-card {
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    background: var(--card-bg);
+    padding: 20px;
+    margin-bottom: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    transition: transform 0.3s ease, border-color 0.3s ease;
+}
+
+.metric-card:hover {
+    transform: translateY(-5px);
+    border-color: var(--primary);
+}
+
+.metric-card h3 {
+    margin-top: 0;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.metric-card p {
+    color: var(--text-muted);
+    font-size: 0.95em;
+    line-height: 1.5;
+}
+
+/* Tags and badges */
+.tag {
+    background: rgba(31, 119, 180, 0.2);
+    color: #66b3ff;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.8em;
+    margin-right: 5px;
+    border: 1px solid rgba(31, 119, 180, 0.5);
+    display: inline-block;
+    margin-bottom: 5px;
+}
+
+/* Sidebar styling */
+[data-testid="stSidebar"] {
+    background: rgba(10, 10, 15, 0.8) !important;
+    backdrop-filter: blur(15px);
+    border-right: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.stButton>button {
+    background-color: var(--primary);
+    color: white;
+    border-radius: 8px;
+    border: none;
+    box-shadow: 0 2px 10px rgba(31, 119, 180, 0.3);
+    transition: all 0.2s ease;
+}
+
+.stButton>button:hover {
+    background-color: #156299;
+    box-shadow: 0 4px 15px rgba(31, 119, 180, 0.5);
+    transform: scale(1.02);
+}
+
+/* Links */
+a.custom-link {
+    color: var(--secondary);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+a.custom-link:hover {
+    text-decoration: underline;
+}
+
+/* Sliders and inputs */
+div[data-baseweb="slider"] {
+    margin-bottom: 20px;
+}
+
+h1.main-title {
+    font-size: 3rem;
+    background: -webkit-linear-gradient(45deg, #1f77b4, #ff7f0e);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 0px;
+}
