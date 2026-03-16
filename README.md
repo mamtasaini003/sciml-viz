@@ -12,7 +12,7 @@ A comprehensive Streamlit web platform that serves as a centralized dashboard to
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/mamtasaini/sciml-viz.git
+   git clone https://github.com/mamtasaini003/sciml-viz.git
    cd sciml-viz
    ```
 
@@ -29,7 +29,7 @@ A comprehensive Streamlit web platform that serves as a centralized dashboard to
 ## Deployment to Streamlit Cloud in 5 Minutes!
 1. Fork or push this repository to your GitHub account.
 2. Log into [Streamlit Community Cloud](https://share.streamlit.io/).
-3. Click **New app**, select `mamtasaini/sciml-viz`, and choose `app.py` as your Main file path.
+3. Click **New app**, select `mamtasaini003/sciml-viz`, and choose `app.py` as your Main file path.
 4. Add your GitHub Classic Token to Streamlit Secrets (optional, helps avoid API rate limits):
    ```toml
    # In Streamlit Cloud Secrets

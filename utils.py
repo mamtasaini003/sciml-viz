@@ -5,7 +5,7 @@ import json
 import os
 
 @st.cache_data(ttl=3600)
-def fetch_mamta_repos(username="mamtasaini"):
+def fetch_mamta_repos(username="mamtasaini003"):
     """
     Fetches GitHub repositories for the given username, filtering for SciML relevant ones.
     Uses public PyGithub API (unauthenticated or with token if available).
@@ -61,7 +61,7 @@ def fetch_mamta_repos(username="mamtasaini"):
                 "description": "Fourier Neural Operator for 2D Navier-Stokes equations.",
                 "stars": 120,
                 "last_updated": "2025-10-15",
-                "url": "https://github.com/mamtasaini/Navier-Stokes-FNO",
+                "url": "https://github.com/mamtasaini003/Navier-Stokes-FNO",
                 "topics": ["fno", "sciml", "navier-stokes"],
                 "language": "Python"
             },
@@ -70,7 +70,7 @@ def fetch_mamta_repos(username="mamtasaini"):
                 "description": "DeepONet learning the solution operator for Darcy flow in porous media.",
                 "stars": 85,
                 "last_updated": "2025-11-20",
-                "url": "https://github.com/mamtasaini/Darcy-Flow-DeepONet",
+                "url": "https://github.com/mamtasaini003/Darcy-Flow-DeepONet",
                 "topics": ["deeponet", "darcy-flow", "pde"],
                 "language": "Python"
             },
@@ -79,7 +79,7 @@ def fetch_mamta_repos(username="mamtasaini"):
                 "description": "Physics-guided diffusion models for inverse problems.",
                 "stars": 45,
                 "last_updated": "2026-01-10",
-                "url": "https://github.com/mamtasaini/Diffusion-Physics",
+                "url": "https://github.com/mamtasaini003/Diffusion-Physics",
                 "topics": ["diffusion", "inverse-problems", "sciml"],
                 "language": "Python"
             }

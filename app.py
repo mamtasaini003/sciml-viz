@@ -16,7 +16,7 @@ with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2103/2103259.png", width=80) 
     st.markdown("## Mamta Saini")
     st.markdown("Scientific Machine Learning Researcher based in Bengaluru.")
-    st.markdown("[Google Scholar](#) | [GitHub](https://github.com/mamtasaini) | [LinkedIn](#)")
+    st.markdown("[Google Scholar](#) | [GitHub](https://github.com/mamtasaini003) | [LinkedIn](#)")
     st.markdown("---")
     st.markdown("### ⚛️ Neural Operators")
     st.markdown("### 🌊 Fluid Dynamics")
@@ -24,7 +24,7 @@ with st.sidebar:
 
 # Main Content
 st.markdown("<h1 class='main-title'>Welcome to SciML Visualizer Hub</h1>", unsafe_allow_html=True)
-st.markdown("Explore state-of-the-art physics-informed deep learning models, neural operators, and diffusion implementations. Automatically synced from [Mamta Saini's GitHub](https://github.com/mamtasaini).")
+st.markdown("Explore state-of-the-art physics-informed deep learning models, neural operators, and diffusion implementations. Automatically synced from [Mamta Saini's GitHub](https://github.com/mamtasaini003).")
 st.markdown("---")
 
 st.markdown("## 📚 Project Overview")
